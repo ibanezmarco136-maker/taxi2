@@ -1,0 +1,1171 @@
+DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>DTV-CONTROL Bolivia</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        #map { z-index: 0; cursor: crosshair; }
+        .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .history-scroll::-webkit-scrollbar { width: 6px; }
+        .history-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .history-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .sim-mode-active { border: 4px solid #f59e0b; }
+        .parking-mode-active { border: 4px solid #2563eb; }
+        
+        @keyframes flashRed {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+            70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+        .restricted-alert-anim { animation: flashRed 1.5s infinite; }
+        .editing-mode { cursor: crosshair !important; border: 4px solid #3b82f6; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- BANNER ALERTA RESTRICCIÓN VEHICULAR (NO BLOQUEANTE) -->
+    <div id="restrictedAlert" class="fixed top-24 left-1/2 transform -translate-x-1/2 z-[5000] hidden w-11/12 max-w-sm pointer-events-none">
+        <div id="restrictedCard" class="bg-red-600 text-white p-4 rounded-xl shadow-2xl text-center pointer-events-auto border-2 border-white/50 transition-all duration-300">
+            <div class="flex items-center justify-between mb-2">
+                <div id="restrictedIconBg" class="bg-white text-red-600 w-10 h-10 rounded-full flex items-center justify-center shadow-sm">
+                    <i id="restrictedIcon" class="fa-solid fa-file-invoice-dollar text-lg"></i>
+                </div>
+                <div class="text-right">
+                    <h2 id="restrictedTitle" class="text-lg font-black uppercase leading-none">¡INFRACCIÓN!</h2>
+                    <p id="restrictedSubtitle" class="text-[10px] font-bold opacity-90 uppercase">Zona Restringida</p>
+                </div>
+            </div>
+            
+            <div class="bg-black/20 rounded-lg p-2 mb-3 flex justify-between items-center">
+                <div class="text-left">
+                    <p class="text-[10px] uppercase tracking-wider opacity-80">Su placa:</p>
+                    <p class="text-xs font-bold text-white/90" id="restrictedPlateMsg">No circula hoy</p>
+                </div>
+                <div class="text-right">
+                    <span id="alertPlateDigit" class="text-3xl font-black bg-white/20 px-2 rounded">?</span>
+                </div>
+            </div>
+            
+            <div class="flex gap-2">
+                <button id="restrictedBtn" onclick="document.getElementById('restrictedAlert').classList.add('hidden')" class="flex-1 bg-white text-red-700 py-2 rounded-lg font-bold hover:bg-gray-100 transition shadow-sm text-xs uppercase">
+                    Ocultar Alerta
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL GESTIÓN DE DATOS (BACKUP) -->
+    <div id="dataModal" class="fixed inset-0 bg-black/60 z-[9500] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
+            <h3 class="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-cloud-arrow-down text-blue-600 text-2xl"></i> Copia de Seguridad
+            </h3>
+            <p class="text-sm text-gray-600 mb-6">Guarda todos tus datos (parqueos, historial, zonas) en un archivo o restaura una copia anterior.</p>
+            
+            <div class="space-y-3">
+                <button onclick="exportData()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-200">
+                    <i class="fa-solid fa-download"></i> Descargar Datos
+                </button>
+                
+                <div class="relative">
+                    <input type="file" id="importFile" accept=".json" class="hidden" onchange="importData(this)">
+                    <button onclick="document.getElementById('importFile').click()" class="w-full bg-white border-2 border-slate-200 hover:border-slate-400 text-slate-700 font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors">
+                        <i class="fa-solid fa-upload"></i> Restaurar Archivo
+                    </button>
+                </div>
+            </div>
+
+            <button onclick="closeDataModal()" class="mt-6 w-full text-gray-400 hover:text-gray-600 font-semibold text-sm">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- MODAL EDITOR DE COORDENADAS -->
+    <div id="coordsModal" class="fixed inset-0 bg-black/60 z-[7000] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh]">
+            <div class="bg-slate-800 text-white p-4 flex justify-between items-center">
+                <h3 class="font-bold"><i class="fa-solid fa-code mr-2 text-yellow-400"></i>Editor de Coordenadas</h3>
+                <button onclick="closeCoordsModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="p-4 overflow-y-auto">
+                <div class="flex justify-between items-center mb-2">
+                    <p class="text-xs text-gray-500">Edita manualmente los puntos [lat, lng]:</p>
+                    <span class="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">JSON</span>
+                </div>
+                <textarea id="coordsTextarea" class="w-full h-48 bg-slate-50 border border-slate-300 rounded-lg p-3 text-xs font-mono text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-inner" placeholder="[[lat, lng], [lat, lng]...]"></textarea>
+            </div>
+            <div class="p-4 border-t bg-gray-50 flex justify-between gap-3">
+                <button onclick="copyCoords()" class="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 transition-colors"><i class="fa-solid fa-copy mr-1"></i> Copiar</button>
+                <button onclick="applyManualCoords()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg text-sm font-bold shadow-lg transition-colors flex-grow"><i class="fa-solid fa-check mr-1"></i> Aplicar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL TABLA DE PARQUEOS -->
+    <div id="parkingTableModal" class="fixed inset-0 bg-black/60 z-[9000] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
+                <h3 class="font-bold flex items-center gap-2"><i class="fa-solid fa-table-list text-yellow-400"></i> Tabla de Coordenadas de Parqueos</h3>
+                <button onclick="closeParkingTableModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="p-0 overflow-auto flex-grow bg-slate-50">
+                <table class="w-full text-sm text-left text-gray-600">
+                    <thead class="text-xs text-gray-700 uppercase bg-gray-200 sticky top-0 shadow-sm">
+                        <tr>
+                            <th class="px-6 py-4 font-extrabold">Nombre</th>
+                            <th class="px-6 py-4 font-extrabold">Latitud</th>
+                            <th class="px-6 py-4 font-extrabold">Longitud</th>
+                            <th class="px-6 py-4 font-extrabold">Cap. / Disp.</th>
+                            <th class="px-6 py-4 font-extrabold">Contacto</th>
+                        </tr>
+                    </thead>
+                    <tbody id="parkingTableBody" class="divide-y divide-gray-200 bg-white"></tbody>
+                </table>
+                <div id="emptyParkingMsg" class="hidden text-center py-10 text-gray-400">
+                    <i class="fa-solid fa-folder-open text-4xl mb-2 opacity-30"></i>
+                    <p>No hay parqueos registrados</p>
+                </div>
+            </div>
+            <div class="p-4 border-t bg-white shrink-0 flex justify-between items-center">
+                 <span class="text-xs text-gray-500 font-semibold" id="parkingCountLabel">0 Registros</span>
+                 <div class="flex gap-2">
+                     <button onclick="exportParkingCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-file-csv"></i> Exportar CSV
+                     </button>
+                     <button onclick="closeParkingTableModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-bold transition-colors">Cerrar</button>
+                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL FORMULARIO PARQUEO -->
+    <div id="parkingModalForm" class="fixed inset-0 bg-black/60 z-[8000] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
+            <h3 class="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-square-parking text-blue-600 text-2xl"></i> <span id="parkingModalTitle">Nuevo Parqueo</span>
+            </h3>
+            
+            <input type="hidden" id="parkId">
+            <input type="hidden" id="parkLat">
+            <input type="hidden" id="parkLng">
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Nombre del Parqueo</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-tag absolute left-3 top-3 text-gray-400"></i>
+                        <input type="text" id="parkName" class="w-full border border-gray-300 rounded-lg p-2 pl-9 outline-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" placeholder="Ej: Garaje Central">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Celular / Contacto</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-phone absolute left-3 top-3 text-gray-400"></i>
+                        <input type="tel" id="parkPhone" class="w-full border border-gray-300 rounded-lg p-2 pl-9 outline-blue-500 focus:ring-2 focus:ring-blue-200 transition-all" placeholder="Ej: 77712345">
+                    </div>
+                </div>
+                
+                <div class="flex gap-3">
+                    <div class="flex-1">
+                        <label class="block text-xs font-bold text-gray-500 mb-1">Capacidad Total</label>
+                        <input type="number" id="parkCap" class="w-full border border-gray-300 rounded-lg p-2 text-center outline-blue-500 focus:ring-2 focus:ring-blue-200" placeholder="0">
+                    </div>
+                    <div class="flex-1">
+                        <label class="block text-xs font-bold text-emerald-600 mb-1">Disponibles</label>
+                        <input type="number" id="parkAvail" class="w-full border-2 border-emerald-100 bg-emerald-50 text-emerald-800 font-bold rounded-lg p-2 text-center outline-emerald-500 focus:ring-2 focus:ring-emerald-200" placeholder="0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-2 mt-6">
+                <button onclick="closeParkingModal()" class="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold hover:bg-gray-200 transition-colors">Cancelar</button>
+                <button onclick="confirmAddParking()" class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTROLES DE EDICIÓN DE ZONA -->
+    <div id="zoneEditorControls" class="fixed top-24 left-1/2 transform -translate-x-1/2 z-[5000] bg-white rounded-xl shadow-2xl p-4 hidden flex-col items-center border-2 border-blue-500 w-11/12 max-w-sm">
+        <h3 class="text-blue-800 font-bold mb-2 flex items-center"><i class="fa-solid fa-pen-to-square mr-2"></i> Dibujando Zona Restringida</h3>
+        <p class="text-xs text-gray-500 mb-4 text-center">Toque en el mapa para añadir puntos.</p>
+        <div class="flex gap-2 w-full mb-3">
+             <button onclick="undoZonePoint()" class="flex-1 bg-yellow-50 text-yellow-700 py-1.5 rounded border border-yellow-300 text-xs font-bold hover:bg-yellow-100 flex items-center justify-center gap-1 transition-colors"><i class="fa-solid fa-rotate-left"></i> Deshacer</button>
+             <button onclick="clearZonePoints()" class="flex-1 bg-red-50 text-red-700 py-1.5 rounded border border-red-300 text-xs font-bold hover:bg-red-100 flex items-center justify-center gap-1 transition-colors"><i class="fa-solid fa-trash"></i> Reiniciar</button>
+             <button onclick="showCurrentPolyCoords()" class="flex-1 bg-slate-100 text-slate-700 py-1.5 rounded border border-slate-300 text-xs font-bold hover:bg-slate-200 flex items-center justify-center gap-1 transition-colors" title="Ver lista de puntos"><i class="fa-solid fa-list-ol"></i> Puntos</button>
+        </div>
+        <div class="flex gap-2 w-full pt-2 border-t border-gray-100">
+            <button onclick="cancelZoneEdit()" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-bold text-sm hover:bg-gray-300 transition-colors">Cancelar</button>
+            <button onclick="saveZonePolygon()" class="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-blue-700 shadow-lg transition-colors">Guardar Zona</button>
+        </div>
+    </div>
+
+    <!-- BANNER DE MODO SIMULACIÓN -->
+    <div id="simModeBanner" class="fixed top-[70px] left-0 right-0 bg-orange-500 text-white text-center py-2 z-[2000] hidden shadow-lg animate-bounce">
+        <i class="fa-solid fa-hand-pointer mr-2"></i> <b>MODO MANUAL:</b> Toca el mapa para mover el taxi.
+    </div>
+    
+    <!-- BANNER DE MODO PARQUEO -->
+    <div id="parkingModeBanner" class="fixed top-[70px] left-0 right-0 bg-blue-600 text-white text-center py-2 z-[2000] hidden shadow-lg">
+        <i class="fa-solid fa-square-parking mr-2"></i> <b>GESTIÓN DE PARQUEOS:</b> Toca el mapa para añadir un punto.
+    </div>
+
+    <!-- MODAL DE HISTORIAL -->
+    <div id="historyModal" class="fixed inset-0 bg-black/50 z-[2000] hidden flex items-end md:items-center justify-center p-0 md:p-4 transition-all duration-300 backdrop-blur-sm">
+        <div class="bg-white w-full md:max-w-md h-[80vh] md:h-auto md:max-h-[80vh] rounded-t-2xl md:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="bg-slate-900 text-white p-4 flex justify-between items-center shrink-0">
+                <h3 class="font-bold text-lg"><i class="fa-solid fa-clock-rotate-left mr-2 text-yellow-400"></i>Historial</h3>
+                <button onclick="toggleHistory()" class="text-gray-400 hover:text-white transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div id="historyList" class="flex-grow overflow-y-auto history-scroll p-4 space-y-3 bg-gray-50"></div>
+            <div class="p-4 border-t border-gray-200 bg-white shrink-0 flex justify-between items-center">
+                <span id="historyCount" class="text-xs font-semibold text-gray-500">0 Viajes</span>
+                <button onclick="clearHistory()" class="text-rose-600 text-sm font-semibold hover:text-rose-800">Borrar Todo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Encabezado -->
+    <header class="bg-yellow-400 text-slate-900 p-4 shadow-lg z-10 relative">
+        <div class="max-w-3xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="bg-slate-900 text-yellow-400 p-2 rounded-lg"><i class="fa-solid fa-taxi text-xl"></i></div>
+                <h1 class="font-bold text-lg md:text-xl">DTV-CONTROL</h1>
+            </div>
+            <div class="flex items-center gap-3">
+                <div id="statusIndicator" class="flex items-center gap-2 text-sm font-semibold opacity-70 hidden md:flex">
+                    <span class="w-3 h-3 rounded-full bg-slate-500"></span>
+                    <span id="statusText">Iniciando...</span>
+                </div>
+                <button onclick="toggleHistory()" class="bg-slate-900 text-white p-2 rounded-lg hover:bg-slate-800 transition-colors shadow-md relative"><i class="fa-solid fa-clock-rotate-left"></i></button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Notificación Toast -->
+    <div id="toast" class="fixed top-24 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl z-[3000] transition-all duration-300 opacity-0 translate-y-[-20px] pointer-events-none flex items-center gap-3 w-max">
+        <i class="fa-solid fa-circle-check text-emerald-400"></i>
+        <span id="toastMsg" class="font-semibold text-sm">Notificación</span>
+    </div>
+
+    <!-- Botón Cerrar Vista -->
+    <button id="btnCloseView" onclick="exitViewMode()" class="fixed top-28 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded-full shadow-lg z-[1000] hidden hover:bg-slate-800 transition-colors text-sm font-bold"><i class="fa-solid fa-xmark mr-2"></i>Cerrar Vista</button>
+
+    <!-- Panel de Control -->
+    <div class="bg-white border-b border-gray-200 z-10">
+        <div class="max-w-3xl mx-auto p-4">
+            <!-- SECCIÓN: CONTROL DE PLACA Y RESTRICCIÓN -->
+            <div class="mb-4 bg-blue-50 p-3 rounded-xl border border-blue-100 shadow-sm">
+                <div class="flex justify-between items-center mb-2">
+                    <label class="text-[10px] font-black text-blue-800 uppercase tracking-wider flex items-center gap-1">
+                        <i class="fa-solid fa-car"></i> Restricción Vehicular
+                    </label>
+                    <span id="todayRestriction" class="text-[10px] bg-white px-2 py-0.5 rounded text-blue-600 font-bold border border-blue-100">...</span>
+                </div>
+                <div class="flex gap-2">
+                    <div class="relative flex-grow">
+                        <input type="tel" id="plateInput" maxlength="1" placeholder="#" 
+                            class="w-full p-2 pl-3 border-2 border-blue-200 rounded-lg text-center font-black text-slate-700 focus:border-blue-500 focus:outline-none transition-colors"
+                            oninput="updatePlateRestriction(this.value)">
+                        <span class="absolute top-1/2 left-3 transform -translate-y-1/2 text-xs text-gray-400 font-semibold pointer-events-none">PLACA: ...</span>
+                    </div>
+                    <div id="restrictionStatus" class="flex items-center justify-center bg-gray-200 text-gray-400 px-4 rounded-lg font-bold text-xs uppercase w-32 transition-colors duration-300">
+                        PENDIENTE
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grid de Estadísticas -->
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="flex flex-col items-center justify-center p-3 md:p-4 bg-slate-50 rounded-xl border border-gray-200 shadow-sm">
+                    <span class="text-gray-500 text-xs uppercase tracking-wider font-bold mb-1">Distancia</span>
+                    <div class="text-2xl md:text-4xl font-extrabold text-slate-800 flex items-baseline">
+                        <span id="distanceDisplay">0.00</span><span class="text-sm md:text-lg text-slate-500 ml-1 font-semibold">km</span>
+                    </div>
+                </div>
+                <div class="flex flex-col items-center justify-center p-3 md:p-4 bg-yellow-50 rounded-xl border border-yellow-200 shadow-sm">
+                    <span class="text-yellow-700 text-xs uppercase tracking-wider font-bold mb-1">Costo Total</span>
+                    <div class="text-2xl md:text-4xl font-extrabold text-slate-900 flex items-baseline">
+                        <span class="text-sm md:text-lg text-yellow-600 mr-1 font-semibold">Bs</span><span id="costDisplay">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <button id="btnStart" onclick="startTracking()" class="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold py-4 px-6 rounded-xl shadow-md transition-all transform active:scale-95"><i class="fa-solid fa-play"></i> Iniciar</button>
+                <button id="btnStop" onclick="stopTracking()" class="hidden flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold py-4 px-6 rounded-xl shadow-md transition-all transform active:scale-95"><i class="fa-solid fa-pause"></i> Pausar</button>
+                <button id="btnReset" onclick="resetTracking()" class="flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-4 px-6 rounded-xl shadow-sm transition-all"><i class="fa-solid fa-rotate-right"></i> Reiniciar</button>
+            </div>
+            
+            <div class="mt-2 text-center flex justify-center gap-4">
+                 <button onclick="forceManualMode()" class="text-[10px] text-orange-500 underline font-bold">Activar Modo Manual</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="mapContainer" class="flex-grow relative bg-gray-200">
+        <div id="map" class="absolute inset-0 h-full w-full"></div>
+        
+        <!-- Botones Flotantes Izquierda Inferior -->
+        <div class="absolute bottom-24 left-6 z-[1000] flex flex-col gap-3">
+            <button onclick="toggleParkingMode()" id="btnParkingMode" class="bg-white text-blue-700 p-3 rounded-full shadow-lg hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors" title="Gestión de Parqueos">
+                <i class="fa-solid fa-square-parking text-xl"></i>
+            </button>
+            <button onclick="showParkingTable()" class="bg-white text-emerald-700 p-3 rounded-full shadow-lg hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors" title="Ver Tabla de Parqueos">
+                <i class="fa-solid fa-table-list text-xl"></i>
+            </button>
+            <button onclick="startZoneEdit()" class="bg-white text-rose-600 p-3 rounded-full shadow-lg hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-400" title="Editar Zona Restringida">
+                <i class="fa-solid fa-draw-polygon text-xl"></i>
+            </button>
+            <button onclick="showSavedZoneCoords()" class="bg-white text-slate-600 p-3 rounded-full shadow-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-slate-400" title="Ver Coordenadas de Zona">
+                <i class="fa-solid fa-list text-xl"></i>
+            </button>
+            <button onclick="openDataModal()" class="bg-white text-slate-800 p-3 rounded-full shadow-lg hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400" title="Copia de Seguridad">
+                <i class="fa-solid fa-cloud-arrow-down text-xl"></i>
+            </button>
+        </div>
+
+        <button onclick="centerMapOnUser()" class="absolute bottom-6 right-6 z-[1000] bg-white text-slate-700 p-3 rounded-full shadow-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-yellow-400"><i class="fa-solid fa-location-crosshairs text-xl"></i></button>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        let map, watchId = null, userPathLine = null, currentMarker = null;
+        let pathCoordinates = [], totalDistanceMeters = 0, isTracking = false;
+        let tripStartTime = null, viewModeLine = null, simulationMode = false;
+        
+        const defaultZoom = 15;
+        const BOLIVIA_CENTER = [-16.2902, -63.5887]; 
+        const ORURO_CENTER = [-17.9647, -67.1060];
+        const RADIO_PERMITIDO_KM = 1200; 
+        const STORAGE_KEY = 'dtv_trips_retro_v3'; 
+        const ZONE_KEY = 'dtv_restricted_zone_poly';
+        const PARKING_KEY = 'dtv_parking_spots';
+
+        let restrictedPolygonLayer = null;
+        let tempEditLayer = null; 
+        let tempMarkers = []; 
+        let isEditingZone = false;
+        let alertShown = false; 
+        let userPlateDigit = null;
+        let isPlateRestrictedToday = false;
+        let isEditingParking = false;
+        let parkingLayerGroup = null;
+
+        // --- GESTIÓN DE DATOS (BACKUP) ---
+        function openDataModal() { document.getElementById('dataModal').classList.remove('hidden'); }
+        function closeDataModal() { document.getElementById('dataModal').classList.add('hidden'); }
+
+        function exportData() {
+            const data = {
+                trips: JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'),
+                parking: JSON.parse(localStorage.getItem(PARKING_KEY) || '[]'),
+                zone: JSON.parse(localStorage.getItem(ZONE_KEY) || 'null'),
+                timestamp: new Date().toISOString()
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "dtv_backup_" + new Date().toISOString().slice(0,10) + ".json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            showToast("Datos descargados correctamente");
+        }
+
+        function importData(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (confirm("¿Estás seguro de restaurar los datos? Se sobrescribirá la información actual.")) {
+                        if(data.trips) localStorage.setItem(STORAGE_KEY, JSON.stringify(data.trips));
+                        if(data.parking) localStorage.setItem(PARKING_KEY, JSON.stringify(data.parking));
+                        if(data.zone) localStorage.setItem(ZONE_KEY, JSON.stringify(data.zone));
+                        alert("Datos restaurados correctamente. La página se recargará.");
+                        location.reload();
+                    }
+                } catch (error) { alert("Error al leer el archivo. Asegúrate de que sea un backup válido."); console.error(error); }
+            };
+            reader.readAsText(file);
+            input.value = ''; 
+        }
+
+        // --- LÓGICA DE PLACA ---
+        function getRestrictedDigitsForToday() {
+            const day = new Date().getDay(); 
+            switch(day) {
+                case 1: return [1, 2];
+                case 2: return [3, 4];
+                case 3: return [5, 6];
+                case 4: return [7, 8];
+                case 5: return [9, 0];
+                default: return [];
+            }
+        }
+
+        function updatePlateRestriction(val) {
+            const digit = parseInt(val);
+            const statusDiv = document.getElementById('restrictionStatus');
+            if (isNaN(digit)) {
+                userPlateDigit = null;
+                statusDiv.className = "flex items-center justify-center bg-gray-200 text-gray-400 px-4 rounded-lg font-bold text-xs uppercase w-32";
+                statusDiv.innerText = "PENDIENTE";
+                return;
+            }
+            userPlateDigit = digit;
+            const restrictedDigits = getRestrictedDigitsForToday();
+            isPlateRestrictedToday = restrictedDigits.includes(digit);
+            if (isPlateRestrictedToday) {
+                statusDiv.className = "flex items-center justify-center bg-red-100 text-red-600 border border-red-200 px-4 rounded-lg font-bold text-xs uppercase w-32 animate-pulse";
+                statusDiv.innerHTML = '<i class="fa-solid fa-ban mr-1"></i> RESTRINGIDO';
+            } else {
+                statusDiv.className = "flex items-center justify-center bg-emerald-100 text-emerald-600 border border-emerald-200 px-4 rounded-lg font-bold text-xs uppercase w-32";
+                statusDiv.innerHTML = '<i class="fa-solid fa-check mr-1"></i> LIBRE';
+            }
+        }
+
+        function initRestrictionInfo() {
+            const restricted = getRestrictedDigitsForToday();
+            const text = restricted.length > 0 ? `Terminación ${restricted.join(' y ')}` : "Ninguna (Fin de semana)";
+            document.getElementById('todayRestriction').innerText = `Hoy no circulan: ${text}`;
+        }
+
+        function calculateCost(km) {
+            if (km <= 0) return 0.00;
+            if (km <= 4) return 7.50;
+            if (km <= 6) return 10.00;
+            if (km <= 8) return 14.00;
+            if (km <= 10) return 18.00;
+            return 20.00;
+        }
+
+        window.onload = function() {
+            initMap();
+            initRestrictionInfo();
+        };
+
+        // --- MAPA ---
+        function initMap() {
+            map = L.map('map').setView(ORURO_CENTER, 14);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                attribution: '&copy; OpenStreetMap', maxZoom: 19
+            }).addTo(map);
+            parkingLayerGroup = L.layerGroup().addTo(map);
+            
+            // --- DATOS POR DEFECTO (Puntos de Parqueo Pre-cargados) ---
+            let spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            if (spots.length === 0) {
+                spots = [
+                    { id: 1700000000001, lat: -17.965935612876383, lng: -67.11411058902742, name: "PARQUEO CELEDONIO FLORES", phone: "68059092", capacity: "22", available: "22" },
+                    { id: 1700000000002, lat: -17.970109694363646, lng: -67.11613833904268, name: "PARQUEO AUTO SEGURO", phone: "78202178", capacity: "12", available: "12" },
+                    { id: 1700000000003, lat: -17.971686430533037, lng: -67.11060762405397, name: "PARQUEO OCCIDENTE", phone: "69595611", capacity: "38", available: "38" },
+                    { id: 1700000000004, lat: -17.969175892520965, lng: -67.11292505264284, name: "PARQUEO EMANUEL", phone: "67240839", capacity: "20", available: "20" },
+                    { id: 1700000000005, lat: -17.971038388568235, lng: -67.1158540248871, name: "PARQUEO VILLCA", phone: "73835239", capacity: "32", available: "32" },
+                    { id: 1700000000005, lat: -17.972793709333210, lng: -67.10672914981843, name: "PARQUEO TITAN", phone: "73255870", capacity: "10", available: "10" },
+                    { id: 1700000000005, lat: -17.964634381492985, lng: -67.10599958896638, name: "PARQUEO VEHICULAR", phone: "68305054", capacity: "16", available: "16" },
+                    { id: 1700000000005, lat: -17.971196572259302, lng: -67.11435198783876, name: "PARQUEO MUTUOS ARTESANOS", phone: "74156574", capacity: "40", available: "40" },
+                    { id: 1700000000005, lat: -17.964930348688732, lng: -67.10788518190385, name: "PARQUEO RODRIGUEZ", phone: "71856452", capacity: "25", available: "25" },
+                    { id: 1700000000005, lat: -17.970046396712550, lng: -67.11189311845693, name: "PARQUEO VEHICULAR", phone: "68625490", capacity: "20", available: "20" },
+                    { id: 1700000000005, lat: -17.972436225435874, lng: -67.11413700974757, name: "PARQUEO VEHICULAR", phone: "74118515", capacity: "22", available: "22" },
+                    { id: 1700000000005, lat: -17.973329486905783, lng: -67.11140692234041, name: "PARQUEO GALAXIA", phone: "60414485", capacity: "20", available: "20" },
+                    { id: 1700000000003, lat: -17.970272981610528, lng: -67.11230814456941, name: "PARQUEO NOHELIA VACAFLOR", phone: "72488898", capacity: "32", available: "32" }
+                ];
+                localStorage.setItem(PARKING_KEY, JSON.stringify(spots));
+            }
+            // ----------------------------------------------------------
+
+            loadRestrictedZone(); 
+            loadParkingSpots();
+            updateStatusText("Esperando GPS...", "wait");
+            
+            map.on('click', function(e) {
+                if (isEditingParking) {
+                    openParkingModal(e.latlng);
+                } else if (isEditingZone) {
+                    addZonePoint(e.latlng);
+                } else if (simulationMode && isTracking) {
+                    handlePositionUpdate({
+                        coords: { latitude: e.latlng.lat, longitude: e.latlng.lng, accuracy: 10 }
+                    });
+                }
+            });
+            attemptGetLocation();
+        }
+
+        // --- PARQUEOS ---
+        function toggleParkingMode() {
+            if(isTracking) { alert("Detén el viaje actual primero."); return; }
+            if(isEditingZone) { alert("Termina de editar la zona primero."); return; }
+            isEditingParking = !isEditingParking;
+            const btn = document.getElementById('btnParkingMode');
+            const banner = document.getElementById('parkingModeBanner');
+            const mapContainer = document.getElementById('mapContainer');
+            if(isEditingParking) {
+                btn.classList.replace('bg-white', 'bg-blue-600');
+                btn.classList.replace('text-blue-700', 'text-white');
+                banner.classList.remove('hidden');
+                mapContainer.classList.add('parking-mode-active');
+                showToast("Modo Parqueo: Toca el mapa para añadir");
+            } else {
+                btn.classList.replace('bg-blue-600', 'bg-white');
+                btn.classList.replace('text-white', 'text-blue-700');
+                banner.classList.add('hidden');
+                mapContainer.classList.remove('parking-mode-active');
+            }
+        }
+
+        function openParkingModal(latlng, existingId = null) {
+            const modal = document.getElementById('parkingModalForm');
+            const title = document.getElementById('parkingModalTitle');
+            document.getElementById('parkLat').value = latlng.lat;
+            document.getElementById('parkLng').value = latlng.lng;
+            document.getElementById('parkId').value = existingId || ''; 
+            
+            if (existingId) {
+                title.innerText = "Editar Parqueo";
+                const spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+                const spot = spots.find(s => s.id == existingId);
+                if(spot) {
+                    document.getElementById('parkName').value = spot.name || '';
+                    document.getElementById('parkPhone').value = spot.phone;
+                    document.getElementById('parkCap').value = spot.capacity;
+                    document.getElementById('parkAvail').value = spot.available;
+                }
+            } else {
+                title.innerText = "Nuevo Parqueo";
+                document.getElementById('parkName').value = '';
+                document.getElementById('parkPhone').value = '';
+                document.getElementById('parkCap').value = '';
+                document.getElementById('parkAvail').value = '';
+            }
+            modal.classList.remove('hidden');
+        }
+
+        function closeParkingModal() { document.getElementById('parkingModalForm').classList.add('hidden'); }
+
+        function confirmAddParking() {
+            const id = document.getElementById('parkId').value || Date.now();
+            const lat = parseFloat(document.getElementById('parkLat').value);
+            const lng = parseFloat(document.getElementById('parkLng').value);
+            const name = document.getElementById('parkName').value || 'Parqueo Sin Nombre';
+            const phone = document.getElementById('parkPhone').value || 'Sin dato';
+            const capacity = document.getElementById('parkCap').value || '0';
+            const available = document.getElementById('parkAvail').value || '0';
+
+            const newSpot = { id, lat, lng, name, phone, capacity, available };
+            let spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            if(document.getElementById('parkId').value) { spots = spots.filter(s => s.id != id); }
+            spots.push(newSpot);
+            localStorage.setItem(PARKING_KEY, JSON.stringify(spots));
+            
+            loadParkingSpots();
+            closeParkingModal();
+            showToast("Punto de parqueo guardado");
+            if(!document.getElementById('parkId').value) toggleParkingMode();
+        }
+
+        function loadParkingSpots() {
+            if(!parkingLayerGroup) return;
+            parkingLayerGroup.clearLayers();
+            const spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            const parkingIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color: #2563eb; color: white; border-radius: 8px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"><i class="fa-solid fa-car"></i></div>`,
+                iconSize: [30, 30], iconAnchor: [15, 30], popupAnchor: [0, -32]
+            });
+
+            spots.forEach(spot => {
+                const marker = L.marker([spot.lat, spot.lng], {icon: parkingIcon});
+                const popupContent = `
+                    <div class="text-center min-w-[150px]">
+                        <h3 class="font-bold text-blue-700 text-lg mb-2"><i class="fa-solid fa-square-parking"></i> ${spot.name || 'Parqueo'}</h3>
+                        <div class="text-left text-sm text-gray-600 space-y-1 mb-3">
+                            <p><i class="fa-solid fa-phone w-5 text-center"></i> <b>Cel:</b> ${spot.phone}</p>
+                            <p><i class="fa-solid fa-warehouse w-5 text-center"></i> <b>Capacidad:</b> ${spot.capacity}</p>
+                            <p><i class="fa-solid fa-check w-5 text-center text-emerald-600"></i> <b>Libres:</b> ${spot.available}</p>
+                        </div>
+                        <div class="flex gap-2 justify-center">
+                            <button onclick="editParking(${spot.id})" class="bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 text-xs font-bold">Editar</button>
+                            <button onclick="deleteParking(${spot.id})" class="bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200 text-xs font-bold">Borrar</button>
+                        </div>
+                    </div>`;
+                marker.bindPopup(popupContent);
+                parkingLayerGroup.addLayer(marker);
+            });
+        }
+
+        // --- TABLA DE PARQUEOS ---
+        function showParkingTable() {
+            const modal = document.getElementById('parkingTableModal');
+            const tbody = document.getElementById('parkingTableBody');
+            const emptyMsg = document.getElementById('emptyParkingMsg');
+            const spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            
+            document.getElementById('parkingCountLabel').innerText = `${spots.length} Registros`;
+            tbody.innerHTML = '';
+
+            if (spots.length === 0) {
+                emptyMsg.classList.remove('hidden');
+                modal.classList.remove('hidden');
+                return;
+            } else { emptyMsg.classList.add('hidden'); }
+
+            spots.forEach(spot => {
+                const row = document.createElement('tr');
+                row.className = "hover:bg-gray-50 border-b border-gray-100";
+                row.innerHTML = `
+                    <td class="px-6 py-3 font-bold text-slate-800">${spot.name || 'Sin nombre'}</td>
+                    <td class="px-6 py-3 font-mono text-xs">${spot.lat.toFixed(6)}</td>
+                    <td class="px-6 py-3 font-mono text-xs">${spot.lng.toFixed(6)}</td>
+                    <td class="px-6 py-3">
+                        <span class="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold mr-2">Cap: ${spot.capacity}</span>
+                        <span class="bg-emerald-100 text-emerald-600 px-2 py-1 rounded text-xs font-bold">Lib: ${spot.available}</span>
+                    </td>
+                    <td class="px-6 py-3 text-blue-600 font-bold"><i class="fa-solid fa-phone mr-1 text-xs"></i>${spot.phone}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            modal.classList.remove('hidden');
+        }
+
+        function closeParkingTableModal() { document.getElementById('parkingTableModal').classList.add('hidden'); }
+
+        function exportParkingCSV() {
+            const spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            if (spots.length === 0) { alert("No hay datos para exportar"); return; }
+            let csvContent = "data:text/csv;charset=utf-8,ID,Nombre,Latitud,Longitud,Telefono,Capacidad,Disponibles\n";
+            spots.forEach(s => {
+                const row = `${s.id},"${s.name || ''}",${s.lat},${s.lng},"${s.phone}",${s.capacity},${s.available}`;
+                csvContent += row + "\n";
+            });
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "parqueos_dtv_control.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        window.deleteParking = function(id) {
+            if(!confirm("¿Eliminar este punto de parqueo?")) return;
+            let spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            spots = spots.filter(s => s.id != id);
+            localStorage.setItem(PARKING_KEY, JSON.stringify(spots));
+            loadParkingSpots();
+            map.closePopup();
+        };
+
+        window.editParking = function(id) {
+            const spots = JSON.parse(localStorage.getItem(PARKING_KEY) || '[]');
+            const spot = spots.find(s => s.id == id);
+            if(spot) {
+                openParkingModal({lat: spot.lat, lng: spot.lng}, id);
+                map.closePopup();
+            }
+        };
+
+        // --- ZONA RESTRINGIDA ---
+        function checkRestrictedZone(lat, lng) {
+            const isInside = isPointInPolygon(lat, lng, restrictedPolygonLayer);
+            
+            if (isInside) {
+                if (!alertShown) {
+                    const hour = new Date().getHours();
+                    const isRestrictedTime = hour >= 7 && hour < 20;
+                    
+                    if (isPlateRestrictedToday && isRestrictedTime) {
+                        showRestrictedAlert('restricted');
+                    } else {
+                        showRestrictedAlert('allowed');
+                    }
+                    alertShown = true; 
+                }
+            } else {
+                alertShown = false;
+                document.getElementById('restrictedAlert').classList.add('hidden'); // Ocultar al salir
+            }
+        }
+
+        function showRestrictedAlert(type) {
+            const container = document.getElementById('restrictedAlert');
+            const card = document.getElementById('restrictedCard');
+            const iconBg = document.getElementById('restrictedIconBg');
+            const icon = document.getElementById('restrictedIcon');
+            const title = document.getElementById('restrictedTitle');
+            const subtitle = document.getElementById('restrictedSubtitle');
+            const plateMsg = document.getElementById('restrictedPlateMsg');
+            const btn = document.getElementById('restrictedBtn');
+            const plateDigit = document.getElementById('alertPlateDigit');
+
+            plateDigit.innerText = userPlateDigit;
+            
+            if (type === 'restricted') {
+                // RED STYLE (INFRACCIÓN)
+                card.className = "bg-red-600 text-white p-4 rounded-xl shadow-2xl text-center restricted-alert-anim pointer-events-auto border-2 border-white/50 transition-all duration-300";
+                iconBg.className = "bg-white text-red-600 w-10 h-10 rounded-full flex items-center justify-center shadow-sm";
+                icon.className = "fa-solid fa-file-invoice-dollar text-lg";
+                title.innerText = "¡INFRACCIÓN!";
+                title.className = "text-lg font-black uppercase leading-none text-white";
+                subtitle.innerText = "RESTRICCIÓN VIGENTE";
+                plateMsg.innerText = "No circula hoy";
+                plateMsg.className = "text-xs font-bold text-white/90";
+                if ("vibrate" in navigator) navigator.vibrate([500, 200, 500]);
+            } else {
+                // GREEN STYLE (PERMITIDO)
+                card.className = "bg-emerald-600 text-white p-4 rounded-xl shadow-2xl text-center pointer-events-auto border-2 border-white/50 transition-all duration-300"; 
+                iconBg.className = "bg-white text-emerald-600 w-10 h-10 rounded-full flex items-center justify-center shadow-sm";
+                icon.className = "fa-solid fa-circle-check text-lg";
+                title.innerText = "ACCESO PERMITIDO";
+                title.className = "text-lg font-black uppercase leading-none text-white";
+                subtitle.innerText = "ZONA RESTRINGIDA";
+                plateMsg.innerText = "Circulación Libre";
+                plateMsg.className = "text-xs font-bold text-white/90";
+                if ("vibrate" in navigator) navigator.vibrate([200]);
+            }
+            container.classList.remove('hidden');
+        }
+
+        function loadRestrictedZone() {
+            const savedZone = localStorage.getItem(ZONE_KEY);
+            let latLngs = [];
+            if (savedZone) {
+                try { latLngs = JSON.parse(savedZone); } catch (e) { console.error("Error en zona guardada"); }
+            }
+            if (!latLngs || latLngs.length < 3) {
+                latLngs = [
+                    [-17.965129, -67.109036], [-17.965099, -67.109728], [-17.965058, -67.110613], [-17.965068, -67.111353],
+                    [-17.965124, -67.111949], [-17.965165, -67.112493], [-17.965129, -67.112601], [-17.964943, -67.112708],
+                    [-17.964844, -67.112780], [-17.964415, -67.112786], [-17.964037, -67.112753], [-17.964114, -67.113338],
+                    [-17.964892, -67.113547], [-17.964895, -67.114062], [-17.964943, -67.114508], [-17.965379, -67.114679],
+                    [-17.966247, -67.114990], [-17.967063, -67.115275], [-17.967916, -67.115564], [-17.968778, -67.115811],
+                    [-17.969630, -67.116090], [-17.970426, -67.116390], [-17.970686, -67.115521], [-17.970921, -67.114695],
+                    [-17.971186, -67.113821], [-17.971442, -67.112930], [-17.971697, -67.112083], [-17.972013, -67.110849],
+                    [-17.970321, -67.110393], [-17.968798, -67.109975], [-17.967045, -67.109545]
+                ];
+            }
+            drawRestrictedPolygon(latLngs);
+        }
+
+        function drawRestrictedPolygon(latLngs) {
+            if (restrictedPolygonLayer) map.removeLayer(restrictedPolygonLayer);
+            restrictedPolygonLayer = L.polygon(latLngs, {
+                color: '#dc2626', fillColor: '#ef4444', fillOpacity: 0.15, weight: 2, dashArray: '5, 5'
+            }).addTo(map);
+            restrictedPolygonLayer.bindPopup("<b>Zona Restringida</b><br>Área de restricción vehicular.");
+            
+            // Permitir clic a través del polígono
+            restrictedPolygonLayer.on('click', function(e) {
+                if (isEditingParking) { openParkingModal(e.latlng); }
+                else if (simulationMode && isTracking) {
+                    handlePositionUpdate({ coords: { latitude: e.latlng.lat, longitude: e.latlng.lng, accuracy: 10 } });
+                }
+            });
+        }
+
+        function startZoneEdit() {
+            if (isTracking) { alert("Detén el viaje actual antes de editar la zona."); return; }
+            if (isEditingParking) { alert("Sal del modo parqueo primero."); return; }
+            isEditingZone = true;
+            tempMarkers = [];
+            if (restrictedPolygonLayer) map.removeLayer(restrictedPolygonLayer);
+            document.getElementById('zoneEditorControls').classList.remove('hidden');
+            document.getElementById('zoneEditorControls').classList.add('flex');
+            document.getElementById('mapContainer').classList.add('editing-mode');
+            showToast("Modo Edición: Toca el mapa");
+        }
+
+        function addZonePoint(latlng) {
+            const marker = L.circleMarker(latlng, { color: 'blue', radius: 5, fillOpacity: 1 }).addTo(map);
+            tempMarkers.push(marker);
+            redrawTempLine();
+        }
+
+        function undoZonePoint() {
+            if (tempMarkers.length > 0) {
+                const lastMarker = tempMarkers.pop();
+                map.removeLayer(lastMarker);
+                redrawTempLine();
+            }
+        }
+
+        function clearZonePoints() {
+            tempMarkers.forEach(m => map.removeLayer(m));
+            tempMarkers = [];
+            if (tempEditLayer) map.removeLayer(tempEditLayer);
+            tempEditLayer = null;
+        }
+
+        function redrawTempLine() {
+            if (tempEditLayer) map.removeLayer(tempEditLayer);
+            const points = tempMarkers.map(m => m.getLatLng());
+            if (points.length > 0) {
+                tempEditLayer = L.polygon(points, { color: 'blue', weight: 2, fillOpacity: 0.1, dashArray: '5, 5' }).addTo(map);
+            }
+        }
+
+        function cancelZoneEdit() {
+            cleanEditArtifacts();
+            isEditingZone = false;
+            loadRestrictedZone();
+            closeEditUI();
+        }
+
+        function saveZonePolygon() {
+            if (tempMarkers.length < 3) { alert("Debes marcar al menos 3 puntos."); return; }
+            const points = tempMarkers.map(m => m.getLatLng());
+            localStorage.setItem(ZONE_KEY, JSON.stringify(points));
+            cleanEditArtifacts();
+            isEditingZone = false;
+            drawRestrictedPolygon(points);
+            closeEditUI();
+            showToast("Zona actualizada");
+        }
+
+        function applyManualCoords() {
+            const text = document.getElementById('coordsTextarea').value;
+            try {
+                const coords = JSON.parse(text);
+                if (!Array.isArray(coords) || coords.length < 3) throw new Error("Lista de al menos 3 puntos.");
+                const latLngs = coords.map(p => {
+                    if (Array.isArray(p) && p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) return L.latLng(p[0], p[1]);
+                    else if (p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng)) return L.latLng(p.lat, p.lng);
+                    throw new Error("Formato inválido.");
+                });
+                localStorage.setItem(ZONE_KEY, JSON.stringify(latLngs));
+                drawRestrictedPolygon(latLngs);
+                closeCoordsModal();
+                showToast("Zona actualizada");
+            } catch (e) { alert("Error: " + e.message); }
+        }
+
+        function cleanEditArtifacts() {
+            tempMarkers.forEach(m => map.removeLayer(m));
+            if (tempEditLayer) map.removeLayer(tempEditLayer);
+            tempMarkers = [];
+            tempEditLayer = null;
+        }
+
+        function closeEditUI() {
+            document.getElementById('zoneEditorControls').classList.add('hidden');
+            document.getElementById('zoneEditorControls').classList.remove('flex');
+            document.getElementById('mapContainer').classList.remove('editing-mode');
+        }
+
+        function showCurrentPolyCoords() {
+            const points = tempMarkers.map(m => m.getLatLng());
+            displayCoordsModal(points);
+        }
+
+        function showSavedZoneCoords() {
+            if(restrictedPolygonLayer) {
+                const points = restrictedPolygonLayer.getLatLngs()[0];
+                displayCoordsModal(points);
+            } else { alert("No hay zona definida."); }
+        }
+
+        function displayCoordsModal(points) {
+            if(!points || points.length === 0) { alert("No hay puntos"); return; }
+            const formatted = points.map(p => `[${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}]`).join(',\n');
+            const finalText = `[\n${formatted}\n]`;
+            document.getElementById('coordsTextarea').value = finalText;
+            document.getElementById('coordsModal').classList.remove('hidden');
+        }
+
+        function closeCoordsModal() { document.getElementById('coordsModal').classList.add('hidden'); }
+        function copyCoords() {
+            const textarea = document.getElementById('coordsTextarea');
+            textarea.select();
+            document.execCommand('copy');
+            showToast("Coopiado");
+        }
+
+        function isPointInPolygon(lat, lng, polygonLayer) {
+            if (!polygonLayer) return false;
+            const polyPoints = polygonLayer.getLatLngs()[0];
+            let x = lat, y = lng, inside = false;
+            for (let i = 0, j = polyPoints.length - 1; i < polyPoints.length; j = i++) {
+                let xi = polyPoints[i].lat, yi = polyPoints[i].lng;
+                let xj = polyPoints[j].lat, yj = polyPoints[j].lng;
+                let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+
+        // --- RASTREO ---
+        function attemptGetLocation() {
+            const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
+            if (!navigator.geolocation) { activateSimulationMode("Navegador antiguo"); return; }
+            if (!isSecure) console.warn("Falta HTTPS.");
+            navigator.geolocation.getCurrentPosition(
+                (pos) => handleSuccess(pos),
+                (err) => activateSimulationMode("GPS no disponible"),
+                { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+            );
+        }
+
+        function handleSuccess(position) {
+            const { latitude, longitude } = position.coords;
+            map.setView([latitude, longitude], defaultZoom);
+            updateMarker([latitude, longitude]);
+            updateStatusText("Listo", "idle");
+            simulationMode = false;
+            document.getElementById('simModeBanner').classList.add('hidden');
+            document.getElementById('mapContainer').classList.remove('sim-mode-active');
+        }
+
+        function activateSimulationMode(reason) {
+            simulationMode = true;
+            updateStatusText("Modo Manual", "wait");
+            const banner = document.getElementById('simModeBanner');
+            banner.innerHTML = `<i class="fa-solid fa-hand-pointer mr-2"></i> <b>MODO MANUAL (${reason}):</b> Toca el mapa para mover el taxi.`;
+            banner.classList.remove('hidden');
+            document.getElementById('mapContainer').classList.add('sim-mode-active');
+            if (!currentMarker) {
+                const center = map.getCenter();
+                updateMarker([center.lat, center.lng]);
+            }
+        }
+        function forceManualMode() { if(!simulationMode) activateSimulationMode("Usuario"); }
+
+        function startTracking() {
+            if (viewModeLine) exitViewMode();
+            if (isEditingZone) { alert("Termina de editar la zona primero."); return; }
+            if (isEditingParking) { alert("Sal del modo parqueo primero."); return; }
+            if (userPlateDigit === null) {
+                alert("Por favor, ingresa el último dígito de la placa.");
+                document.getElementById('plateInput').focus();
+                return;
+            }
+            isTracking = true;
+            if (!tripStartTime) tripStartTime = new Date();
+            updateUIState('tracking');
+            alertShown = false; 
+            if (!simulationMode && navigator.geolocation) {
+                watchId = navigator.geolocation.watchPosition(
+                    handlePositionUpdate, 
+                    (err) => { if (!simulationMode && err.code === 1) activateSimulationMode("Permiso denegado"); }, 
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            } else {
+                showToast("Toca el mapa para avanzar");
+            }
+        }
+
+        function stopTracking() {
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            isTracking = false;
+            updateUIState('stopped');
+        }
+
+        function resetTracking() {
+            stopTracking();
+            if (totalDistanceMeters > 0) {
+                saveTripToHistory();
+                showToast("Viaje finalizado y guardado");
+            }
+            pathCoordinates = []; 
+            totalDistanceMeters = 0; 
+            tripStartTime = null;
+            if (userPathLine) { map.removeLayer(userPathLine); userPathLine = null; }
+            document.getElementById('distanceDisplay').innerText = "0.00"; 
+            document.getElementById('costDisplay').innerText = "0.00";
+            updateUIState('idle');
+            if(!simulationMode && navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(pos => {
+                    const latLng = [pos.coords.latitude, pos.coords.longitude];
+                    map.setView(latLng, defaultZoom);
+                    updateMarker(latLng);
+                }, null, {timeout: 3000});
+            }
+        }
+
+        function handlePositionUpdate(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+            const newLatLng = L.latLng(lat, lng);
+            if (!checkGeofence(lat, lng)) {
+                if(!confirm("Estás fuera de Bolivia. ¿Continuar?")) { stopTracking(); return; }
+            }
+            checkRestrictedZone(lat, lng);
+            updateMarker([lat, lng]);
+            if (!simulationMode && pathCoordinates.length > 0 && accuracy > 40) return;
+            if (pathCoordinates.length === 0) {
+                pathCoordinates.push(newLatLng);
+                map.setView(newLatLng, defaultZoom);
+                return;
+            }
+            const lastLatLng = pathCoordinates[pathCoordinates.length - 1];
+            const distance = lastLatLng.distanceTo(newLatLng);
+            if (distance >= 1 || simulationMode) { 
+                pathCoordinates.push(newLatLng);
+                totalDistanceMeters += distance;
+                const km = totalDistanceMeters / 1000;
+                document.getElementById('distanceDisplay').innerText = km.toFixed(2);
+                document.getElementById('costDisplay').innerText = calculateCost(km).toFixed(2);
+                drawPath();
+                if(!simulationMode) map.panTo(newLatLng);
+            }
+        }
+
+        function checkGeofence(lat, lng) {
+            return (L.latLng(BOLIVIA_CENTER).distanceTo(L.latLng(lat, lng)) / 1000) <= RADIO_PERMITIDO_KM;
+        }
+
+        function updateMarker(latLng) {
+            const taxiIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color: #facc15; width: 24px; height: 24px; border-radius: 50%; border: 3px solid #0f172a; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
+                iconSize: [24, 24], iconAnchor: [12, 12]
+            });
+            if (currentMarker) currentMarker.setLatLng(latLng);
+            else currentMarker = L.marker(latLng, { icon: taxiIcon }).addTo(map);
+        }
+
+        function drawPath() {
+            if (userPathLine) map.removeLayer(userPathLine);
+            userPathLine = L.polyline(pathCoordinates, { color: '#2563eb', weight: 5, opacity: 0.8, lineJoin: 'round' }).addTo(map);
+        }
+
+        function updateStatusText(text, type) {
+            const lbl = document.getElementById('statusText');
+            const dot = document.getElementById('statusIndicator').querySelector('span');
+            lbl.innerText = text;
+            dot.className = "w-3 h-3 rounded-full transition-colors duration-300 " + 
+                (type === 'tracking' ? "bg-emerald-500 animate-pulse-slow" : 
+                 type === 'wait' ? "bg-blue-400 animate-pulse" : "bg-slate-500");
+            lbl.className = (type === 'tracking' ? "text-emerald-700 font-bold" : "text-slate-500 font-semibold");
+        }
+        
+        function updateUIState(state) {
+            const btnStart = document.getElementById('btnStart');
+            const btnStop = document.getElementById('btnStop');
+            const btnReset = document.getElementById('btnReset');
+            if (state === 'tracking') {
+                btnStart.classList.add('hidden'); btnStop.classList.remove('hidden');
+                btnReset.disabled = true; btnReset.classList.add('opacity-50', 'cursor-not-allowed');
+                updateStatusText("En Ruta", 'tracking');
+            } else if (state === 'stopped') {
+                btnStart.classList.remove('hidden'); btnStop.classList.add('hidden');
+                btnStart.innerHTML = '<i class="fa-solid fa-play"></i> Continuar';
+                btnReset.disabled = false; btnReset.classList.remove('opacity-50', 'cursor-not-allowed');
+                updateStatusText("Pausado", 'idle');
+            } else { 
+                btnStart.classList.remove('hidden'); btnStop.classList.add('hidden');
+                btnStart.innerHTML = '<i class="fa-solid fa-play"></i> Iniciar';
+                btnReset.disabled = false; btnReset.classList.remove('opacity-50', 'cursor-not-allowed');
+                updateStatusText(simulationMode ? "Modo Manual" : "Listo", 'idle');
+            }
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            toast.classList.remove('opacity-0', 'translate-y-[-20px]');
+            setTimeout(() => { toast.classList.add('opacity-0', 'translate-y-[-20px]'); }, 3000);
+        }
+
+        function saveTripToHistory() {
+            let trips = [];
+            try { trips = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch(e) { trips = []; }
+            const km = totalDistanceMeters / 1000;
+            const trip = {
+                id: Date.now(),
+                date: new Date().toLocaleDateString('es-ES'),
+                startTime: tripStartTime ? tripStartTime.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}) : '--:--',
+                endTime: new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+                distance: km.toFixed(2),
+                cost: calculateCost(km).toFixed(2),
+                path: pathCoordinates.map(p => ({lat: p.lat, lng: p.lng}))
+            };
+            trips.unshift(trip);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(trips));
+        }
+
+        function toggleHistory() {
+            const modal = document.getElementById('historyModal');
+            if (modal.classList.contains('hidden')) { renderHistory(); modal.classList.remove('hidden'); }
+            else modal.classList.add('hidden');
+        }
+
+        function renderHistory() {
+            const list = document.getElementById('historyList');
+            let trips = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+            document.getElementById('historyCount').innerText = `${trips.length} Viajes`;
+            list.innerHTML = trips.length ? '' : '<div class="text-center text-gray-400 py-8">Sin historial</div>';
+            trips.forEach(t => {
+                const item = document.createElement('div');
+                item.className = 'bg-white border p-3 rounded-lg shadow-sm flex justify-between items-center';
+                item.innerHTML = `
+                    <div class="flex-grow">
+                        <div class="text-xs text-gray-500 font-semibold">${t.date} | ${t.startTime}-${t.endTime}</div>
+                        <div class="font-bold text-slate-600 mt-1">${t.distance} km <span class="text-yellow-600 ml-2">Bs ${t.cost}</span></div>
+                    </div>
+                    <div class="flex gap-2 ml-2">
+                        <button onclick="viewTrip(${t.id})" class="text-blue-500 bg-blue-50 p-2 rounded"><i class="fa-solid fa-eye"></i></button>
+                        <button onclick="delTrip(${t.id})" class="text-rose-500 bg-rose-50 p-2 rounded"><i class="fa-solid fa-trash"></i></button>
+                    </div>`;
+                list.appendChild(item);
+            });
+        }
+
+        function viewTrip(id) {
+            const t = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]').find(x => x.id === id);
+            if(!t) return;
+            toggleHistory();
+            if(userPathLine) map.removeLayer(userPathLine);
+            if(viewModeLine) map.removeLayer(viewModeLine);
+            if(t.path && t.path.length > 0) {
+                viewModeLine = L.polyline(t.path.map(p=>[p.lat, p.lng]), {color:'#9333ea', weight:6}).addTo(map);
+                map.fitBounds(viewModeLine.getBounds());
+            }
+            document.getElementById('distanceDisplay').innerText = t.distance;
+            document.getElementById('costDisplay').innerText = t.cost;
+            document.getElementById('btnCloseView').classList.remove('hidden');
+            document.getElementById('btnStart').disabled = true;
+            updateStatusText(`Historial: ${t.date}`, "wait");
+        }
+
+        function exitViewMode() {
+            if(viewModeLine) map.removeLayer(viewModeLine); viewModeLine = null;
+            document.getElementById('btnCloseView').classList.add('hidden');
+            document.getElementById('btnStart').disabled = false;
+            document.getElementById('distanceDisplay').innerText = "0.00";
+            document.getElementById('costDisplay').innerText = "0.00";
+            updateStatusText(simulationMode ? "Modo Manual" : "Listo", "idle"); 
+        }
+
+        function delTrip(id) {
+            if(!confirm("¿Eliminar?")) return;
+            let trips = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(trips.filter(t => t.id !== id)));
+            renderHistory();
+        }
+        function clearHistory() { if(confirm("¿Borrar todo?")) { localStorage.removeItem(STORAGE_KEY); renderHistory(); } }
+        function centerMapOnUser() { attemptGetLocation(); }
+    </script>
+</body>
+</html>
